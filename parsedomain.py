@@ -259,12 +259,13 @@ class Domain:
     def _type_names(self):
         """Get all the names of types (e.g., "plane")"""
         names = set()
-        for expr in self.exprs:
-            where = getattr(expr, "where", None)
-            if where:
-                for clause in where.clauses:
-                    if clause[1] == "is":
-                        names.add(clause[2])
+        for expr_list in self.expressions.values():
+            for expr in expr_list:
+                where = getattr(expr, "where", None)
+                if where:
+                    for clause in where.clauses:
+                        if clause[1] == "is":
+                            names.add(clause[2])
         return names
 
     def substitute(self, bindings):
@@ -277,7 +278,7 @@ class Domain:
         names = set(bindings.keys())
         if names != self._type_names():
             raise Exception("Missing some type names: %r" % self._type_names())
-        return ConcreteDomain(self.name, self.exprs, bindings)
+        return ConcreteDomain(self.name, self.expressions, bindings)
 
     def problem(self, *, bindings=None, start, goal):
         """Bind variables and generate a problem at the same time"""

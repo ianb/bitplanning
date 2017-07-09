@@ -97,18 +97,21 @@ class ConcreteDomain:
     def __init__(self, name, exprs, bindings):
         self.name = name
         self.bindings = bindings
-        self.constraints = []
-        self.actions = []
-        self.states = []
-        for expr in exprs:
-            if expr.is_state:
-                self.states.extend(expr.expand(bindings))
-            elif expr.is_constraint:
-                self.constraints.extend(expr.expand(bindings))
-            elif expr.is_action:
-                self.actions.extend(expr.expand(bindings))
-            else:
-                assert False
+        self.constraints = [
+          item
+          for expr in exprs['constraints']
+          for item in expr.expand(bindings)
+        ]
+        self.actions = [
+          item
+          for expr in exprs['actions']
+          for item in expr.expand(bindings)
+        ]
+        self.states = [
+          item
+          for expr in exprs['states']
+          for item in expr.expand(bindings)
+        ]
         if not self.states:
             # Must be implied states, since none were given
             implied_states = set()
@@ -547,7 +550,7 @@ class ProblemLog:
     was found
     """
 
-    def __init__(self, start_state, goal, domain, *no_activity=False):
+    def __init__(self, start_state, goal, domain, *, no_activity=False):
         self.seen_count = self.skipped_count = self.total_count = 0
         self.activity = []
         self.start_state = start_state

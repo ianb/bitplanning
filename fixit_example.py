@@ -1,3 +1,10 @@
+"""
+Runs the fixit examples from http://www.cs.cmu.edu/afs/cs.cmu.edu/usr/avrim/Planning/Graphplan/
+
+The algorithm can't solve these examples. You can see what it tries by running
+this file (Jupyter doesn't handle the ongoing output that well)
+"""
+
 from parsedomain import Domain
 
 fixit_domain = Domain("fixit", """

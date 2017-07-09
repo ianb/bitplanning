@@ -560,7 +560,7 @@ class Problem:
                 self.log.skip_already_seen(action=best, score=best_score)
                 continue
             seen.add(best.must_bits)
-            self.log.attempt_solution(action=best, score=best_score, alternatives=list(frontier))
+            self.log.attempt_solution(action=best, score=best_score, alternative_count=len(frontier))
             if print_increment and (not pause_every or not count % pause_every):
                 self.log.print_increment()
             if pause and (not pause_every or not count % pause_every):
@@ -587,7 +587,7 @@ class Problem:
                     self.log.abort_solution()
                     return None
             if not self.start_state.conflicts(best.must_bits) and best.then_bits.satisfies(self.goal):
-                self.log.solution(action=best, remaining=list(frontier), expansions=len(seen))
+                self.log.solution(action=best, remaining_count=len(frontier), expansions=len(seen))
                 self.solution = best
                 self._has_solution = True
                 return best
@@ -644,13 +644,13 @@ class ProblemLog:
     def skip_already_seen(self, *, action, score):
         self.skipped_count += 1
         self.add_activity(LogSkipAlreadySeen(action, score))
-    def attempt_solution(self, *, action, score, alternatives):
+    def attempt_solution(self, *, action, score, alternative_count):
         self.seen_count += 1
-        self.add_activity(LogAttemptSolution(action, score, alternatives))
+        self.add_activity(LogAttemptSolution(action, score, alternative_count))
     def no_accomplishments(self, *, action):
         self.add_activity(LogNoAccomplishments(action))
-    def solution(self, *, action, remaining, expansions):
-        self.add_activity(LogSolution(action, remaining, expansions))
+    def solution(self, *, action, remaining_count, expansions):
+        self.add_activity(LogSolution(action, remaining_count, expansions))
         self.end = time.time()
     def no_solution(self):
         self.add_activity(LogNoSolution())
@@ -756,16 +756,16 @@ class LogSkipAlreadySeen:
             self.action.actions[0].actions[0].action, self.action.must_bits.mask_str(), self.action._repr_html_(header=False))
 
 class LogAttemptSolution:
-    def __init__(self, action, score, alternatives):
+    def __init__(self, action, score, alternative_count):
         self.action = action
         self.score = score
-        self.alternatives = alternatives
+        self.alternative_count = alternative_count
     def __str__(self):
         return 'Attempted action of {} alternatives: (score {}) {}'.format(
-            len(self.alternatives), self.score, self.action)
+            self.alternative_count, self.score, self.action)
     def _repr_html_(self):
         return 'Attempted action of {} alternatives: (score <code>{}</code>) {}'.format(
-            len(self.alternatives), self.score, self.action._repr_html_(header=False))
+            self.alternative_count, self.score, self.action._repr_html_(header=False))
 
 class LogNoAccomplishments:
     def __init__(self, action):
@@ -778,16 +778,16 @@ class LogNoAccomplishments:
             self.action.must_bits.mask_str(), self.action._repr_html_(header=False))
 
 class LogSolution:
-    def __init__(self, action, remaining, expansions):
+    def __init__(self, action, remaining_count, expansions):
         self.action = action
-        self.remaining = remaining
+        self.remaining_count = remaining_count
         self.expansions = expansions
     def __str__(self):
         return 'Found solution with {} alternatives unexplored: {}'.format(
-            len(self.remaining), self.action)
+            self.remaining_count, self.action)
     def _repr_html_(self):
         return 'Found solution with {} alternatives unexplored: {}'.format(
-            len(self.remaining), self.action._repr_html_(header=False))
+            self.remaining_count, self.action._repr_html_(header=False))
 
 class LogNoSolution:
     def __init__(self):

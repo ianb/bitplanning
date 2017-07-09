@@ -22,6 +22,28 @@ class BitMask:
         self._mask = mask
         self._width = width
 
+    @classmethod
+    def from_string(cls, s):
+        s = s.strip("<").strip(">")
+        if s.startswith("BitMask "):
+            s = s[len("BitMask "):]
+        s = s.strip()
+        width = len(s)
+        bits = 0
+        mask = 0
+        for i in range(width):
+            pos = 1 << i
+            c = s[i]
+            if c == "-":
+                continue
+            mask |= pos
+            if c in cls.on_names:
+                bits |= pos
+            elif c not in cls.off_names:
+                raise Exception("Got bad character: {}".format(c))
+            # FIXME: would be nice to test the character is in the right position
+        return cls(bits, mask, width)
+
     def __eq__(self, other):
         return isinstance(other, BitMask) and self._mask == other._mask and self._bits == other._bits and self._width == other._width
 
@@ -80,14 +102,21 @@ class BitMask:
         goal_bits = (~goal._bits) & mask
         return my_bits ^ goal_bits
 
-    def unset_from_action(self, action_then):
-        assert not self.conflicts(action_then)
+    def unset_from_action(self, action_then, force=False):
+        if not force:
+            assert not self.conflicts(action_then)
         return BitMask(self._bits, self._mask & (~action_then._mask), self._width)
 
     def difference(self, other):
         mask = self._mask & other._mask
         diff = (self._bits & mask) ^ (other._bits & mask)
         return BitMask(self._bits, diff, self._width)
+
+    def without_matching(self, other):
+        """All our bits, except those that match what is in other"""
+        matching_mask = self._mask & other._mask & (other._bits ^ (~ self._bits))
+        new_mask = self._mask & (~ matching_mask)
+        return BitMask(self._bits, new_mask, self._width)
 
     def carry_forward(self, previous):
         combined_mask = previous._mask | self._mask

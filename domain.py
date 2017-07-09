@@ -6,6 +6,7 @@ the `ConcreteDomain` in this module, which is where all the work is done.
 """
 from bitmask import BitMask, IncompatibleAdd
 import time
+import re
 
 class IncompatibleConstraints(Exception):
     def __init__(self, message, *, constraint, init_state, then_state, then_mask, action=None):
@@ -163,6 +164,12 @@ class ConcreteDomain:
                 if action.is_mutex(other_action):
                     action.mutex.add(other_action)
 
+    def get_action_by_name(self, action_name):
+        for action in self.actions:
+            if action.action == action_name:
+                return action
+        raise KeyError("No action with the name {}".format(action_name))
+
     def goal(self, state_strings):
         """
         Creates a goal BitMask, given a line-separated string or list of
@@ -254,7 +261,8 @@ class ConcreteDomain:
         """
         actions = []
         for action in self.actions:
-            if not action.then_bits.conflicts(goal) and action.then_bits.accomplishes_something(goal):
+            important_then_bits = action.then_bits.without_matching(action.must_bits)
+            if not action.then_bits.conflicts(goal) and important_then_bits.accomplishes_something(goal) and not action.must_bits.unset_from_action(action.then_bits, force=True).conflicts(goal):
                 actions.append(action)
         return actions
 
@@ -370,6 +378,7 @@ class ConcreteDomain:
             lines.append('    then: {}'.format('; '.join(action.then)))
             if bits:
                 lines.append('      {}'.format(action.then_bits.mask_str()))
+                lines.append('      {}'.format(action.then_bits.without_matching(action.must_bits).mask_str()))
             if mutex:
                 lines.append('    mutex: {}'.format('; '.join(sorted([a.action for a in action.mutex]))))
         return '\n'.join(lines)
@@ -389,6 +398,13 @@ class ActionPool:
         self.actions = actions
         self.must_bits = BitMask.all_union([a.must_bits for a in actions])
         self.then_bits = BitMask.all_union([a.then_bits for a in actions])
+
+    def __contains__(self, action):
+        if isinstance(action, ActionPool):
+            return False
+        if not isinstance(action, Action):
+            raise TypeError("ActionPools can only contain Actions")
+        return action in self.actions
 
     def __repr__(self):
         return '<ActionPool %s>' % (' '.join(a.action for a in self.actions))
@@ -422,6 +438,13 @@ class ActionSequence:
     def action_count(self):
         """Total number of actions (including a count of actions inside pools)"""
         return sum(len(pool.actions) for pool in self.actions)
+
+    def __contains__(self, action):
+        if not isinstance(action, (Action, ActionPool)):
+            raise TypeError("An ActionSequence can only contain Action and ActionPool")
+        if action in self.actions:
+            return True
+        return any(action in action_pool for action_pool in self.actions)
 
     def __repr__(self):
         pools = [' '.join(a.action for a in pool.actions) for pool in self.actions]
@@ -487,6 +510,9 @@ class GoalPool:
         self.must_bits = goal
         self.then_bits = BitMask.null(goal._width)
 
+    def __contains__(self, action):
+        return False
+
     def __repr__(self):
         return '<Goal %s>' % self.must_bits.mask_str()
 
@@ -506,28 +532,59 @@ class Problem:
             raise ReferenceError(".solve() has not yet been called")
         return self._has_solution
 
+    def _print_pause_help(self):
+        print("Paused; Enter to continue, P to unpause (but print), Q to run quietly")
+        print("  Enter a number to pause only ever N increments.")
+        print("  Enter 'watch ActionName' to pause when seen")
+
     def solve(self, *, pause=False, print_increment=None, no_activity=False):
         self.log = ProblemLog(self.start_state, self.goal, self.domain, no_activity=no_activity)
         seen = set()
+        watch_for_actions = []
+        seen_help = False
         blank_seq = ActionSequence([GoalPool(self.goal)], null=self.domain.null)
         frontier = [(blank_seq, self.domain.score_accomplishment_pool(blank_seq, self.goal, self.start_state))]
         if pause and print_increment is None:
             print_increment = True
+        count = 0
+        pause_every = 0
         while frontier:
+            count += 1
             self.log.pick_frontier(frontier_length=len(frontier))
-            best, best_score = frontier.pop(0)
+            if seen and not count % 5:
+                #print("Random...")
+                best, best_score = frontier.pop(len(frontier)//2)
+            else:
+                best, best_score = frontier.pop(0)
             if best.must_bits in seen:
                 self.log.skip_already_seen(action=best, score=best_score)
                 continue
             seen.add(best.must_bits)
             self.log.attempt_solution(action=best, score=best_score, alternatives=list(frontier))
-            if print_increment:
+            if print_increment and (not pause_every or not count % pause_every):
                 self.log.print_increment()
-            if pause:
+            if pause and (not pause_every or not count % pause_every):
                 try:
-                    input("Hit Enter to continue search ")
+                    if not seen_help:
+                        self._print_pause_help()
+                        seen_help = True
+                    result = input("> ").strip()
+                    if result == "?" or result == "help":
+                        self._print_pause_help()
+                    if result.upper() == "P":
+                        pause = False
+                    if result.upper() == "Q":
+                        pause = False
+                        print_increment = False
+                    if re.search(r'^\d+$', result):
+                        pause_every = int(result)
+                    if result.startswith("watch "):
+                        watch_action_name = result.split(None, 1)[1]
+                        watch_for_actions.append(self.domain.get_action_by_name(watch_action_name))
+                        print("Watching for {} (use P to cruise until we find it".format(watch_for_actions[-1]))
                 except KeyboardInterrupt:
                     print("Aborting search")
+                    self.log.abort_solution()
                     return None
             if not self.start_state.conflicts(best.must_bits) and best.then_bits.satisfies(self.goal):
                 self.log.solution(action=best, remaining=list(frontier), expansions=len(seen))
@@ -537,9 +594,20 @@ class Problem:
             new_seqs = [best.with_prepend(pool) for pool in self.domain.strict_accomplishment_pools(best.must_bits)]
             if not new_seqs:
                 self.log.no_accomplishments(action=best)
+            if watch_for_actions:
+                if any(a in a_seq for a in watch_for_actions for a_seq in new_seqs):
+                    print("Found action, entering pause mode")
+                    print("Basis sequence:")
+                    print(best)
+                    for i, seq in enumerate(s for s in new_seqs if any(a in s for a in watch_for_actions)):
+                        print("Derived sequence {}:".format(i + 1))
+                        print(seq)
+                    input("> ")
+                    pause = True
             frontier.extend([
                 (seq, self.domain.score_accomplishment_pool(seq, self.goal, self.start_state))
-                for seq in new_seqs])
+                for seq in new_seqs
+                if seq.must_bits not in seen])
             frontier.sort(key=lambda x: x[1])
         self.log.no_solution()
         self._has_solution = False
@@ -587,6 +655,8 @@ class ProblemLog:
     def no_solution(self):
         self.add_activity(LogNoSolution())
         self.end = time.time()
+    def abort_solution(self):
+        self.end = time.time()
     def __str__(self):
         lines = ['Problem solution log:']
         lines.append('  Tried {} sequences, skipped {}, explored {}'.format(
@@ -594,7 +664,10 @@ class ProblemLog:
         lines.append('  Took {:0.5} seconds'.format(self.end - self.start))
         lines.append('  Starting state: {}'.format(self.start_state.mask_str()))
         lines.append('  Goal state:     {}'.format(self.goal.mask_str()))
-        for log in self.activity:
+        activities = self.activity
+        if self.activity_increment:
+            activities = activities[-1:]
+        for log in activities:
             line = str(log)
             if line:
                 lines.append("    " + line)

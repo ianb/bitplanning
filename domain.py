@@ -586,12 +586,15 @@ class Problem:
                     print("Aborting search")
                     self.log.abort_solution()
                     return None
+            self.log.goal_tests += 1
             if not self.start_state.conflicts(best.must_bits) and best.then_bits.satisfies(self.goal):
                 self.log.solution(action=best, remaining_count=len(frontier), expansions=len(seen))
                 self.solution = best
                 self._has_solution = True
                 return best
             new_seqs = [best.with_prepend(pool) for pool in self.domain.strict_accomplishment_pools(best.must_bits)]
+            self.log.expansions += 1
+            self.log.new_nodes += len(new_seqs)
             if not new_seqs:
                 self.log.no_accomplishments(action=best)
             if watch_for_actions:
@@ -627,6 +630,12 @@ class ProblemLog:
         self.start = time.time()
         self.activity_increment = 0
         self.no_activity = no_activity
+        # Equivalent to succs in InstrumentedProblem
+        self.expansions = 0
+        # Equivalent to goal_tests
+        self.goal_tests = 0
+        # Equivalent to states
+        self.new_nodes = 0
     def add_activity(self, item):
         if not self.no_activity:
             self.activity.append(item)
@@ -657,11 +666,15 @@ class ProblemLog:
         self.end = time.time()
     def abort_solution(self):
         self.end = time.time()
-    def __str__(self):
+    def __str__(self, short=False):
         lines = ['Problem solution log:']
         lines.append('  Tried {} sequences, skipped {}, explored {}'.format(
             self.total_count, self.skipped_count, self.seen_count))
         lines.append('  Took {:0.5} seconds'.format(self.end - self.start))
+        lines.append('  Expansions: {} Goal tests: {} New nodes: {}'.format(
+            self.expansions, self.goal_tests, self.new_nodes))
+        if short:
+            return '\n'.join(lines)
         lines.append('  Starting state: {}'.format(self.start_state.mask_str()))
         lines.append('  Goal state:     {}'.format(self.goal.mask_str()))
         activities = self.activity
@@ -672,7 +685,7 @@ class ProblemLog:
             if line:
                 lines.append("    " + line)
         return '\n'.join(lines)
-    def _repr_html_(self):
+    def _repr_html_(self, short=False):
         import tempita
         htmls = []
         for log in self.activity:
@@ -690,6 +703,7 @@ class ProblemLog:
             if self.goal.is_set(state.bit_mask._bits) and not self.goal.conflicts(state.bit_mask):
                 goal_states.append(state.name)
         return tempita.HTMLTemplate("""
+        {{if not short}}
         <aside style="float: right; background-color: #ddd; padding: 0.75em">
           <div>
             Start state:<br>
@@ -710,13 +724,18 @@ class ProblemLog:
               </ul>
           </div>
         </aside>
+        {{endif}}
         <h3>Problem solution log:</h3>
         <ul style="list-style: none">
           <li>Tried: <strong>{{self.total_count}}</strong></li>
           <li>Skipped: <strong>{{self.skipped_count}}</strong> ({{int(100*self.skipped_count/self.total_count)}}%)</li>
           <li>Explored: <strong>{{self.seen_count}}</strong></li>
           <li>Time: <strong>{{"{:0.5}".format(self.end - self.start)}}s</strong></li>
+          <li>Expansions: {{self.expansions}}</li>
+          <li>Goal tests: {{self.goal_tests}}</li>
+          <li>New nodes: {{self.new_nodes}}</li>
         </ul>
+        {{if not short}}
         <ol>
           {{for h in htmls}}
             {{if h.get("html")}}
@@ -726,7 +745,22 @@ class ProblemLog:
             {{endif}}
           {{endfor}}
         </ol>
-        """).substitute({"self": self, "htmls": htmls, "start_states": start_states, "goal_states": goal_states})
+        {{endif}}
+        """).substitute({"self": self, "htmls": htmls, "start_states": start_states, "goal_states": goal_states, "short": short})
+    @property
+    def short(self):
+        return _ShortRepr(str=self.__str__(short=True), html=self._repr_html_(short=True))
+
+class _ShortRepr:
+    def __init__(self, str, html):
+        self.str = str
+        self.html = html
+    def __str__(self):
+        return self.str
+    def _repr_html_(self):
+        return self.html
+    def __repr__(self):
+        return str(self)
 
 class LogPickFrontier:
     def __init__(self, length):
